@@ -1,4 +1,5 @@
 import os
+from datetime import time
 
 import streamlit as st
 try:
@@ -19,18 +20,29 @@ setup_logging()
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
+
+TIME_PERIOD_WINDOWS = {
+    "Anytime": (0, 1440),
+    "Morning (6:00 AM - 12:00 PM)": (360, 720),
+    "Afternoon (12:00 PM - 5:00 PM)": (720, 1020),
+    "Evening (5:00 PM - 10:00 PM)": (1020, 1320),
+    "Night (10:00 PM - 12:00 AM)": (1320, 1440),
+}
+
+
+def _format_minutes(total_minutes: int) -> str:
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def _describe_time_window(window: tuple[int, int]) -> str:
+    for label, preset in TIME_PERIOD_WINDOWS.items():
+        if window == preset:
+            return label
+    return f"Custom ({_format_minutes(window[0])}-{_format_minutes(window[1])})"
+
 st.title("🐾 PawPal+")
-
-st.markdown(
-    """
-Welcome to the PawPal+ starter app.
-
-This file is intentionally thin. It gives you a working Streamlit app so you can start quickly,
-but **it does not implement the project logic**. Your job is to design the system and build it.
-
-Use this app as your interactive demo once your backend classes/functions exist.
-"""
-)
 
 with st.expander("Scenario", expanded=True):
     st.markdown(
@@ -89,7 +101,7 @@ if "followup_history" not in st.session_state:
     st.session_state.followup_history = []
 
 # Task input form with better layout
-input_col1, input_col2, input_col3, input_col4 = st.columns(4)
+input_col1, input_col2, input_col3, input_col4, input_col5 = st.columns(5)
 with input_col1:
     task_title = st.text_input("Task title", value="Morning walk", placeholder="e.g., Morning walk")
 with input_col2:
@@ -98,21 +110,51 @@ with input_col3:
     priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
 with input_col4:
     task_type = st.selectbox("Type", ["walk", "feed", "groom", "play", "other"], key="task_type_select")
+with input_col5:
+    selected_time_period = st.selectbox(
+        "Time period",
+        [
+            "Anytime",
+            "Morning (6:00 AM - 12:00 PM)",
+            "Afternoon (12:00 PM - 5:00 PM)",
+            "Evening (5:00 PM - 10:00 PM)",
+            "Night (10:00 PM - 12:00 AM)",
+            "Custom",
+        ],
+        index=0,
+    )
+
+if selected_time_period == "Custom":
+    custom_col1, custom_col2 = st.columns(2)
+    with custom_col1:
+        custom_start = st.time_input("Custom start", value=time(8, 0))
+    with custom_col2:
+        custom_end = st.time_input("Custom end", value=time(10, 0))
+    selected_window = (
+        custom_start.hour * 60 + custom_start.minute,
+        custom_end.hour * 60 + custom_end.minute,
+    )
+else:
+    selected_window = TIME_PERIOD_WINDOWS[selected_time_period]
 
 task_notes = st.text_area("Notes (optional)", value="", height=80)
 
 if st.button("➕ Add Task", use_container_width=True):
-    task = Task(
-        title=task_title,
-        task_type=task_type,
-        duration_minutes=int(duration),
-        priority=priority,
-        notes=task_notes
-    )
-    if st.session_state.scheduler.add_task(task):
-        st.success(f"✅ Added task: **{task.title}**")
+    if selected_window[0] >= selected_window[1]:
+        st.error("❌ Invalid time period. End time must be after start time.")
     else:
-        st.error("❌ Invalid task. Please check the inputs.")
+        task = Task(
+            title=task_title,
+            task_type=task_type,
+            duration_minutes=int(duration),
+            priority=priority,
+            time_window=selected_window,
+            notes=task_notes
+        )
+        if st.session_state.scheduler.add_task(task):
+            st.success(f"✅ Added task: **{task.title}**")
+        else:
+            st.error("❌ Invalid task. Please check the inputs.")
 
 if st.session_state.scheduler.tasks:
     st.subheader("📊 Task Overview")
@@ -138,6 +180,7 @@ if st.session_state.scheduler.tasks:
             "Type": t.task_type,
             "Duration (min)": t.duration_minutes,
             "Priority": t.priority.upper(),
+            "Time Period": _describe_time_window(t.time_window),
             "Start Time": f"{t.start_time // 60:02d}:{t.start_time % 60:02d}" if t.start_time is not None else "Not set",
             "Notes": t.notes if t.notes else "—"
         }
@@ -183,11 +226,15 @@ if st.button("🚀 Generate Schedule", use_container_width=True):
                 for conflict in pre_plan_conflicts:
                     st.caption(conflict)
         
-        # Generate plan
+        status = st.status("Generating plan and explanation...", expanded=True)
+        status.write("Step 1/3: Building schedule")
         plan = scheduler.generate_plan()
-        
+
         if plan:
+            status.write("Step 2/3: Retrieving pet-care evidence")
             retrieved_facts = st.session_state.retriever.retrieve_for_plan(plan, pet=pet)
+
+            status.write("Step 3/3: Generating AI explanation")
             explanation = explain_schedule(
                 plan_items=plan,
                 retrieved_facts=retrieved_facts,
@@ -206,6 +253,11 @@ if st.button("🚀 Generate Schedule", use_container_width=True):
             else:
                 st.session_state.explanation_mode = "gemini"
             st.session_state.followup_history = []
+
+            if st.session_state.explanation_mode == "fallback":
+                status.update(label="Schedule ready (fallback explanation)", state="complete")
+            else:
+                status.update(label="Schedule ready", state="complete")
 
             st.success(f"✅ Schedule generated for {pet_name}!", icon="✅")
             
@@ -272,6 +324,7 @@ if st.button("🚀 Generate Schedule", use_container_width=True):
                         if item.task.notes:
                             st.markdown(f"**Notes:** {item.task.notes}")
         else:
+            status.update(label="Schedule generation failed", state="error")
             st.error("❌ Could not generate a schedule. Please verify your inputs and try again.")
 
 if st.session_state.generated_plan:
@@ -320,14 +373,15 @@ if st.session_state.generated_plan:
         with st.chat_message("user"):
             st.markdown(followup_question)
 
-        answer = answer_followup_question(
-            question=followup_question,
-            plan_items=st.session_state.generated_plan,
-            retrieved_facts=st.session_state.retrieved_facts,
-            pet=st.session_state.generated_pet,
-            owner=st.session_state.generated_owner,
-            conversation_history=st.session_state.followup_history,
-        )
+        with st.spinner("Thinking through your follow-up..."):
+            answer = answer_followup_question(
+                question=followup_question,
+                plan_items=st.session_state.generated_plan,
+                retrieved_facts=st.session_state.retrieved_facts,
+                pet=st.session_state.generated_pet,
+                owner=st.session_state.generated_owner,
+                conversation_history=st.session_state.followup_history,
+            )
         st.session_state.followup_history.append({"role": "assistant", "content": answer})
         with st.chat_message("assistant"):
             st.markdown(answer)

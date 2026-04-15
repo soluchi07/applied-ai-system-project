@@ -17,6 +17,21 @@ class _FakeClient:
         return _Response(self._text)
 
 
+class _CapturePromptClient:
+    def __init__(self, text: str = "ok"):
+        self._text = text
+        self.prompt = ""
+
+    def generate_content(self, prompt: str):
+        self.prompt = prompt
+
+        class _Response:
+            def __init__(self, text: str):
+                self.text = text
+
+        return _Response(self._text)
+
+
 def _sample_inputs():
     task = Task("Morning walk", "walk", 30, "high")
     plan = [PlanItem(task=task, scheduled_time=540, duration_minutes=30, reason="Scheduled first")]
@@ -34,8 +49,10 @@ def _sample_inputs():
     return plan, facts, pet, owner
 
 
-def test_explain_schedule_uses_fallback_without_key() -> None:
+def test_explain_schedule_uses_fallback_without_key(monkeypatch) -> None:
     plan, facts, pet, owner = _sample_inputs()
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
     explanation = explain_schedule(
         plan_items=plan,
@@ -63,8 +80,10 @@ def test_explain_schedule_uses_client_when_available() -> None:
     assert explanation == "Gemini explanation output"
 
 
-def test_followup_answer_uses_fallback_when_client_unavailable() -> None:
+def test_followup_answer_uses_fallback_when_client_unavailable(monkeypatch) -> None:
     plan, facts, pet, owner = _sample_inputs()
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
     answer = answer_followup_question(
         question="Why is Morning walk first?",
@@ -77,3 +96,36 @@ def test_followup_answer_uses_fallback_when_client_unavailable() -> None:
 
     assert "Morning walk" in answer
     assert "Retrieved context" in answer
+
+
+def test_explain_schedule_prompt_allows_general_guidance_when_no_retrieval() -> None:
+    plan, _facts, pet, owner = _sample_inputs()
+    client = _CapturePromptClient("ok")
+
+    explain_schedule(
+        plan_items=plan,
+        retrieved_facts={"Morning walk": []},
+        pet=pet,
+        owner=owner,
+        client=client,
+    )
+
+    assert "No retrieval evidence was found for this run" in client.prompt
+    assert "general guidance" in client.prompt
+
+
+def test_followup_prompt_allows_general_guidance_when_no_retrieval() -> None:
+    plan, _facts, pet, owner = _sample_inputs()
+    client = _CapturePromptClient("ok")
+
+    answer_followup_question(
+        question="Why is Morning walk first?",
+        plan_items=plan,
+        retrieved_facts={"Morning walk": []},
+        pet=pet,
+        owner=owner,
+        client=client,
+    )
+
+    assert "No retrieved evidence is available for this schedule" in client.prompt
+    assert "general guidance" in client.prompt

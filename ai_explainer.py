@@ -30,12 +30,20 @@ def explain_schedule(
 ) -> str:
     """Explain why the schedule was generated using retrieved context."""
     context_payload = _build_context_payload(plan_items, retrieved_facts, pet, owner)
+    has_retrieved_data = _has_any_retrieved_data(retrieved_facts)
     logger.info("RAG context for explanation: %s", json.dumps(context_payload)[:1200])
+
+    guidance_mode = (
+        "Ground explanations in retrieved facts whenever available. "
+        "If a specific task has no retrieved facts, use cautious general pet-care intuition and label it as general guidance."
+        if has_retrieved_data
+        else "No retrieval evidence was found for this run. Use general pet-care intuition to provide a practical explanation, "
+        "and clearly label recommendations as general guidance rather than retrieved evidence."
+    )
 
     content = (
         "You are PawPal+, an assistant that explains pet care schedules. "
-        "Use only the retrieved facts when giving medical or care recommendations. "
-        "If a task has no facts, clearly state that no specific guideline was retrieved.\n\n"
+        f"{guidance_mode}\n\n"
         "Produce:\n"
         "1) A short overview of scheduling strategy\n"
         "2) Bullet explanations per scheduled task\n"
@@ -72,10 +80,17 @@ def answer_followup_question(
         return "Please ask a question about the schedule."
 
     context_payload = _build_context_payload(plan_items, retrieved_facts, pet, owner)
+    has_retrieved_data = _has_any_retrieved_data(retrieved_facts)
+    grounding_instruction = (
+        "Ground the answer in retrieved facts and task timing. If evidence is missing for part of the question, "
+        "use cautious general pet-care intuition and label it as general guidance."
+        if has_retrieved_data
+        else "No retrieved evidence is available for this schedule. Use general pet-care intuition and task timing, "
+        "and clearly label the answer as general guidance."
+    )
     user_content = (
         "Answer the user question about the current schedule. "
-        "Ground the answer in the retrieved facts and task timing. "
-        "If there is not enough retrieved context, explicitly say so and avoid guessing.\n\n"
+        f"{grounding_instruction}\n\n"
         f"Question: {question}\n\n"
         f"Data: {json.dumps(context_payload, indent=2)}"
     )
@@ -129,6 +144,10 @@ def _build_context_payload(
         "scheduled_tasks": scheduled,
         "unscheduled_tasks": unscheduled,
     }
+
+
+def _has_any_retrieved_data(retrieved_facts: Dict[str, List[RetrievedFact]]) -> bool:
+    return any(bool(facts) for facts in retrieved_facts.values())
 
 
 def _build_messages(

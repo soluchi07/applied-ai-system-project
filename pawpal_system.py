@@ -23,6 +23,13 @@ def _time_to_minutes(value: Optional[object]) -> Optional[int]:
     return None
 
 
+def _minutes_to_time(total_minutes: int) -> str:
+    """Convert minutes since midnight to HH:MM text."""
+    hours = total_minutes // 60
+    minutes = total_minutes % 60
+    return f"{hours:02d}:{minutes:02d}"
+
+
 class Task:
     """Represents a pet care task."""
 
@@ -491,14 +498,16 @@ class Scheduler:
         Time Complexity: O(k * s) where k is search depth (up to 8 attempts) 
                         and s is number of occupied slots
         """
+        latest_start = latest_end - task.duration_minutes
+        if earliest_start > latest_start:
+            return None
+
         if self._try_schedule_at(task, earliest_start, occupied_slots):
             return earliest_start
 
-        for offset in range(15, min(120, latest_end - earliest_start), 15):
-            candidate_start = earliest_start + offset
-            if candidate_start + task.duration_minutes <= latest_end:
-                if self._try_schedule_at(task, candidate_start, occupied_slots):
-                    return candidate_start
+        for candidate_start in range(earliest_start + 15, latest_start + 1, 15):
+            if self._try_schedule_at(task, candidate_start, occupied_slots):
+                return candidate_start
 
         return None
 
@@ -635,10 +644,13 @@ class Scheduler:
         rigid_tasks = [t for t in self.tasks if not t.is_flexible]
         flexible_tasks = [t for t in self.tasks if t.is_flexible]
 
-        current_time = self.owner.availability[0]
+        priority_reference_time = self.owner.availability[0]
         sorted_tasks = sorted(
             rigid_tasks,
-            key=lambda t: (self._get_dynamic_priority(t, current_time), t.duration_minutes),
+            key=lambda t: (
+                self._get_dynamic_priority(t, priority_reference_time),
+                t.duration_minutes,
+            ),
             reverse=True,
         )
 
@@ -662,7 +674,7 @@ class Scheduler:
             task_start = task.time_window[0]
             task_end = task.time_window[1]
 
-            earliest_start = max(current_time, task_start, self.owner.availability[0])
+            earliest_start = max(task_start, self.owner.availability[0])
             latest_end = min(owner_end, task_end)
 
             if earliest_start + task.duration_minutes > latest_end:
@@ -683,7 +695,7 @@ class Scheduler:
             if best_start is not None:
                 end_time = best_start + task.duration_minutes
 
-                time_desc = f"{best_start // 60:02d}:{best_start % 60:02d}"
+                time_desc = _minutes_to_time(best_start)
                 if best_start > earliest_start:
                     reason = (
                         f"Scheduled at {time_desc} ({task.priority} priority, "
@@ -698,6 +710,13 @@ class Scheduler:
                 if self.pet.species == "dog" and task.task_type == "walk" and best_start < 600:
                     reason += " - dogs benefit from morning exercise"
 
+                if task.priority == "high" and task.time_window[0] >= 1020:
+                    window_start = _minutes_to_time(task.time_window[0])
+                    window_end = _minutes_to_time(task.time_window[1])
+                    reason += (
+                        f" - kept inside evening window {window_start}-{window_end}"
+                    )
+
                 plan_item = PlanItem(
                     task=task,
                     scheduled_time=best_start,
@@ -707,7 +726,6 @@ class Scheduler:
                 plan.append(plan_item)
                 scheduled_tasks.append(task)
                 occupied_slots.append((best_start, end_time + self.break_time_minutes))
-                current_time = end_time + self.break_time_minutes
             else:
                 hours_needed = task.duration_minutes / 60
                 plan.append(

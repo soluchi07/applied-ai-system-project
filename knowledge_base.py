@@ -39,22 +39,36 @@ PET_CARE_FACTS: List[CareFact] = [
     CareFact("Most adult cats benefit from at least 15 minutes of interactive play daily to reduce stress and boredom.", "cat", ["play", "exercise", "enrichment"], "exercise"),
     CareFact("High-energy dog breeds often need a longer morning activity block to reduce disruptive behavior later in the day.", "dog", ["walk", "morning", "behavior"], "exercise"),
     CareFact("Puppies should have shorter, more frequent activity sessions and regular rest breaks.", "dog", ["puppy", "rest", "exercise"], "exercise"),
+    CareFact("Senior dogs may need shorter, lower-impact walks with extra recovery time.", "dog", ["walk", "senior", "exercise"], "exercise"),
+    CareFact("Indoor cats benefit from play bursts that mimic hunting cycles, especially in the evening.", "cat", ["play", "evening", "enrichment"], "exercise"),
     CareFact("Adult dogs are typically fed once or twice daily at consistent times to support digestion and routine.", "dog", ["feed", "meal", "routine"], "nutrition"),
     CareFact("Many cats do best with two or three smaller meals spread through the day rather than a single large meal.", "cat", ["feed", "meal", "routine"], "nutrition"),
     CareFact("Fresh water should be available throughout the day, and bowls should be cleaned regularly.", "all", ["water", "hydration", "daily"], "nutrition"),
     CareFact("After vigorous activity, allow a cool-down period before feeding to reduce stomach upset risk in dogs.", "dog", ["feed", "walk", "timing"], "nutrition"),
+    CareFact("Dogs with sensitive stomachs often do better with fixed feeding times and gradual food transitions.", "dog", ["feed", "routine", "digestive"], "nutrition"),
+    CareFact("Cats often prefer food and water stations placed in calm, separate locations.", "cat", ["feed", "hydration", "environment"], "nutrition"),
     CareFact("Administer medications at the same time each day when possible to improve adherence.", "all", ["medication", "timing", "routine"], "medical"),
     CareFact("Some medications are best given with food; scheduling meds after meals can reduce GI side effects.", "all", ["medication", "feed", "timing"], "medical"),
     CareFact("Observation checks after medication can help catch side effects early.", "all", ["medication", "monitor", "safety"], "medical"),
     CareFact("Post-procedure pets often need reduced activity and extra rest windows for recovery.", "all", ["rest", "recovery", "medical"], "medical"),
+    CareFact("If a pet misses a dose window, follow vet instructions instead of doubling the next dose.", "all", ["medication", "safety", "vet"], "medical"),
+    CareFact("Watch for vomiting, diarrhea, lethargy, or breathing changes after new medications and call a vet if symptoms escalate.", "all", ["medication", "warning", "safety"], "medical"),
     CareFact("Regular grooming helps detect skin issues earlier and lowers matting risk.", "all", ["groom", "health", "coat"], "grooming"),
     CareFact("Long-haired cats often need brushing multiple times per week to prevent painful mats.", "cat", ["groom", "brush", "coat"], "grooming"),
     CareFact("Bathing frequency for most dogs is often monthly or as advised by a vet, not daily.", "dog", ["groom", "bath", "skin"], "grooming"),
+    CareFact("Routine nail trims can improve comfort and reduce risk of posture-related discomfort.", "all", ["groom", "nails", "comfort"], "grooming"),
     CareFact("Short training sessions with positive reinforcement improve consistency better than infrequent long sessions.", "all", ["training", "behavior", "routine"], "behavior"),
     CareFact("Mentally enriching activities can reduce destructive behavior in both cats and dogs.", "all", ["enrichment", "play", "behavior"], "behavior"),
+    CareFact("Predictable routines can reduce anxiety for pets that struggle with sudden schedule changes.", "all", ["routine", "behavior", "anxiety"], "behavior"),
+    CareFact("Puzzle feeders and scent games can help high-energy dogs settle before evening rest.", "dog", ["play", "enrichment", "evening"], "behavior"),
     CareFact("Scheduling demanding tasks earlier in available owner windows can reduce skipped tasks later in the day.", "all", ["priority", "schedule", "consistency"], "planning"),
     CareFact("Buffer time between tasks helps avoid cascading delays when one task runs long.", "all", ["buffer", "schedule", "planning"], "planning"),
+    CareFact("Evening-only tasks should remain in their allowed window, even when they are high priority.", "all", ["evening", "priority", "window"], "planning"),
+    CareFact("When multiple tasks compete, prioritize urgent care while respecting hard time-window constraints.", "all", ["priority", "window", "schedule"], "planning"),
+    CareFact("Other care tasks like litter checks, toy rotation, or cleaning can be used as flexible fillers between fixed tasks.", "all", ["other", "flexible", "routine"], "planning"),
     CareFact("When no clear guideline applies, it is safer to acknowledge uncertainty and follow vet-specific instructions.", "all", ["safety", "guardrail", "vet"], "safety"),
+    CareFact("Avoid strenuous outdoor activity in extreme heat or cold; adjust timing and duration for safety.", "all", ["safety", "weather", "exercise"], "safety"),
+    CareFact("Keep toxic foods and household chemicals out of reach, and contact a vet promptly if exposure is suspected.", "all", ["safety", "toxin", "emergency"], "safety"),
 ]
 
 
@@ -65,7 +79,7 @@ class SemanticRetriever:
         self,
         facts: Optional[Sequence[CareFact]] = None,
         top_k: int = 3,
-        similarity_threshold: float = 0.2,
+        similarity_threshold: float = 0.6,
         model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         embedding_backend: Optional[Callable[[str], Sequence[float]]] = None,
     ) -> None:
@@ -97,8 +111,10 @@ class SemanticRetriever:
         filtered_facts = self._filter_facts_by_species(species)
 
         scored: List[RetrievedFact] = []
+        query_tokens = self._tokenize(cleaned_query)
         for fact in filtered_facts:
             similarity = self._cosine_similarity(query_vector, self._embed(fact.text))
+            similarity += self._keyword_overlap_boost(query_tokens, fact)
             if similarity >= self.similarity_threshold:
                 scored.append(
                     RetrievedFact(
@@ -129,17 +145,47 @@ class SemanticRetriever:
 
     def _build_task_query(self, task: "Task", pet: Optional["Pet"] = None) -> str:
         pet_species = pet.species if pet else ""
+        type_synonyms = {
+            "walk": "walk walking exercise outdoors movement",
+            "feed": "feed feeding meal food nutrition",
+            "groom": "groom grooming brushing hygiene coat",
+            "play": "play enrichment activity stimulation",
+            "other": "routine care check monitor flexible",
+        }
+        priority_synonyms = {
+            "high": "urgent important",
+            "medium": "standard",
+            "low": "optional",
+        }
         return " ".join(
             part
             for part in [
                 task.title,
                 task.task_type,
+                type_synonyms.get(task.task_type, ""),
                 task.notes,
                 task.priority,
+                priority_synonyms.get(task.priority, ""),
                 pet_species,
             ]
             if part
         )
+
+    def _keyword_overlap_boost(self, query_tokens: Sequence[str], fact: CareFact) -> float:
+        if not query_tokens:
+            return 0.0
+
+        fact_tokens = set(self._tokenize(fact.text))
+        tag_tokens = {self._normalize_text(tag) for tag in fact.tags}
+        query_set = set(query_tokens)
+        if not query_set:
+            return 0.0
+
+        fact_overlap = len(query_set & fact_tokens)
+        tag_overlap = len(query_set & tag_tokens)
+
+        boost = min(0.08, 0.015 * fact_overlap + 0.04 * tag_overlap)
+        return boost
 
     def _embed(self, text: str) -> List[float]:
         if text in self._cache:
@@ -210,6 +256,10 @@ class SemanticRetriever:
 
     def _normalize_text(self, text: str) -> str:
         return re.sub(r"\s+", " ", text.strip().lower())
+
+    def _tokenize(self, text: str) -> List[str]:
+        normalized = self._normalize_text(text)
+        return re.findall(r"[a-z0-9]+", normalized)
 
     def _to_float_list(self, vector: Sequence[float]) -> List[float]:
         return [float(value) for value in vector]

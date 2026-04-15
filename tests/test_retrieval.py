@@ -63,3 +63,15 @@ def test_retrieve_for_plan_maps_each_task() -> None:
     assert "Breakfast" in results
     assert len(results["Morning walk"]) <= 2
     assert len(results["Breakfast"]) <= 2
+
+
+def test_feed_query_returns_relevant_nutrition_fact() -> None:
+    retriever = SemanticRetriever(facts=PET_CARE_FACTS)
+
+    results = retriever.retrieve(
+        "Feed breakfast for dog high priority routine",
+        species="dog",
+    )
+
+    assert results
+    assert any(item.topic == "nutrition" for item in results)
