@@ -4,7 +4,4 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 
-# personal additions
-scheduler.py
-test_scheduler.py
-demo_improvements.py
+.env

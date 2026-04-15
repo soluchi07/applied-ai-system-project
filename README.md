@@ -88,6 +88,24 @@ Provides flexible task management:
 
 PawPal+ now includes advanced scheduling features:
 
+## RAG-Powered AI Advisor
+
+PawPal+ now includes a retrieval-augmented explanation layer that grounds AI output in a pet-care knowledge base.
+
+- `knowledge_base.py` stores curated care facts and performs semantic retrieval (top-3 facts per task)
+- `ai_explainer.py` sends the schedule + retrieved facts to Gemini for grounded reasoning
+- `app.py` renders:
+  - schedule output from the scheduler
+  - AI explanation section
+  - multi-turn follow-up Q&A tied to the current generated plan
+- `logging_config.py` configures console + file logs in `pawpal_execution.log`
+
+### Guardrails and Reliability
+
+- If retrieval returns no relevant facts for a task, the app explicitly says no specific guideline was retrieved
+- If Gemini is unavailable (missing key/network/API error), the app falls back to local explanation logic
+- Retrieval operations and model-call outcomes are logged for debugging and reproducibility
+
 ### Recurring Tasks
 - **Daily & Weekly Tasks**: Mark tasks with `frequency="daily"` or `frequency="weekly"`
 - **Auto-Regeneration**: When a recurring task is marked complete, a new instance is automatically created for the next occurrence
@@ -123,6 +141,33 @@ All core scheduling methods now include comprehensive docstrings with algorithm 
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+```
+
+### Environment Variables
+
+Set your Gemini API key before running the app:
+
+```bash
+export GEMINI_API_KEY="your_key_here"  # macOS/Linux
+set GEMINI_API_KEY=your_key_here        # Windows cmd
+$env:GEMINI_API_KEY="your_key_here"    # Windows PowerShell
+```
+
+You can also place keys in a local `.env` file (for example `GEMINI_API_KEY=...`).
+PawPal+ auto-loads `.env` at startup.
+
+`GOOGLE_API_KEY` is also accepted for compatibility. If no key is set, PawPal+ still runs and uses local fallback explanations.
+
+### Run
+
+```bash
+streamlit run app.py
+```
+
+### Test
+
+```bash
+pytest -q
 ```
 
 ### Suggested workflow

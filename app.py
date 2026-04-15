@@ -1,6 +1,21 @@
-import streamlit as st
+import os
 
+import streamlit as st
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - defensive fallback for missing optional dependency
+    load_dotenv = None
+
+from ai_explainer import answer_followup_question, explain_schedule
+from knowledge_base import SemanticRetriever
+from logging_config import setup_logging
 from pawpal_system import Task, Pet, PetOwner, Scheduler
+
+# Load local environment variables (e.g., GEMINI_API_KEY) before app logic runs.
+if load_dotenv is not None:
+    load_dotenv()
+
+setup_logging()
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -56,6 +71,22 @@ st.caption("Build your task list. Tasks are sorted chronologically and checked f
 
 if "scheduler" not in st.session_state:
     st.session_state.scheduler = Scheduler()
+if "retriever" not in st.session_state:
+    st.session_state.retriever = SemanticRetriever()
+if "generated_plan" not in st.session_state:
+    st.session_state.generated_plan = None
+if "generated_pet" not in st.session_state:
+    st.session_state.generated_pet = None
+if "generated_owner" not in st.session_state:
+    st.session_state.generated_owner = None
+if "retrieved_facts" not in st.session_state:
+    st.session_state.retrieved_facts = {}
+if "schedule_explanation" not in st.session_state:
+    st.session_state.schedule_explanation = ""
+if "explanation_mode" not in st.session_state:
+    st.session_state.explanation_mode = "unknown"
+if "followup_history" not in st.session_state:
+    st.session_state.followup_history = []
 
 # Task input form with better layout
 input_col1, input_col2, input_col3, input_col4 = st.columns(4)
@@ -137,7 +168,7 @@ if st.button("🚀 Generate Schedule", use_container_width=True):
         scheduler = st.session_state.scheduler
 
         # Create and add pet
-        clean_species = pet_name.split()[-1] if '🐕' in species or '🐱' in species else species
+        clean_species = species.split(" ", 1)[-1].strip().lower()
         pet = Pet(name=pet_name, species=clean_species)
         scheduler.set_pet(pet)
 
@@ -156,6 +187,26 @@ if st.button("🚀 Generate Schedule", use_container_width=True):
         plan = scheduler.generate_plan()
         
         if plan:
+            retrieved_facts = st.session_state.retriever.retrieve_for_plan(plan, pet=pet)
+            explanation = explain_schedule(
+                plan_items=plan,
+                retrieved_facts=retrieved_facts,
+                pet=pet,
+                owner=owner,
+                conversation_history=None,
+            )
+
+            st.session_state.generated_plan = plan
+            st.session_state.generated_pet = pet
+            st.session_state.generated_owner = owner
+            st.session_state.retrieved_facts = retrieved_facts
+            st.session_state.schedule_explanation = explanation
+            if explanation.lstrip().startswith("### Schedule Explanation (Fallback Mode)"):
+                st.session_state.explanation_mode = "fallback"
+            else:
+                st.session_state.explanation_mode = "gemini"
+            st.session_state.followup_history = []
+
             st.success(f"✅ Schedule generated for {pet_name}!", icon="✅")
             
             # Schedule header
@@ -222,3 +273,61 @@ if st.button("🚀 Generate Schedule", use_container_width=True):
                             st.markdown(f"**Notes:** {item.task.notes}")
         else:
             st.error("❌ Could not generate a schedule. Please verify your inputs and try again.")
+
+if st.session_state.generated_plan:
+    st.divider()
+    st.subheader("🤖 AI Explanation (RAG)")
+    st.caption("This explanation is grounded in retrieved pet-care facts for each task.")
+
+    st.markdown("#### AI Health")
+    health_col1, health_col2 = st.columns(2)
+    with health_col1:
+        engine_value = "Gemini Active" if st.session_state.explanation_mode == "gemini" else "Fallback Mode"
+        st.metric("Engine", engine_value)
+    with health_col2:
+        key_value = "Configured" if (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")) else "Missing"
+        st.metric("Gemini API Key", key_value)
+
+    if st.session_state.explanation_mode == "fallback":
+        st.warning(
+            "Gemini output was unavailable for this run, so the app used local fallback reasoning.",
+            icon="⚠️",
+        )
+    else:
+        st.success("Gemini responded successfully for this schedule.", icon="✅")
+
+    st.markdown(st.session_state.schedule_explanation)
+
+    with st.expander("View retrieved evidence", expanded=False):
+        for task_title, facts in st.session_state.retrieved_facts.items():
+            st.markdown(f"**{task_title}**")
+            if not facts:
+                st.caption("No specific guideline retrieved for this task.")
+                continue
+            for fact in facts:
+                st.caption(f"- ({fact.score:.2f}) {fact.text}")
+
+    st.subheader("💬 Ask Follow-up Questions")
+    st.caption("Questions are remembered for this schedule in the current app session.")
+
+    for message in st.session_state.followup_history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    followup_question = st.chat_input("Ask about timing, priorities, or why a task was placed where it is")
+    if followup_question:
+        st.session_state.followup_history.append({"role": "user", "content": followup_question})
+        with st.chat_message("user"):
+            st.markdown(followup_question)
+
+        answer = answer_followup_question(
+            question=followup_question,
+            plan_items=st.session_state.generated_plan,
+            retrieved_facts=st.session_state.retrieved_facts,
+            pet=st.session_state.generated_pet,
+            owner=st.session_state.generated_owner,
+            conversation_history=st.session_state.followup_history,
+        )
+        st.session_state.followup_history.append({"role": "assistant", "content": answer})
+        with st.chat_message("assistant"):
+            st.markdown(answer)
