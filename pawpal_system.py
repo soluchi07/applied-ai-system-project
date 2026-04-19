@@ -675,83 +675,101 @@ class Scheduler:
         occupied_slots: List[Tuple[int, int]] = []
         owner_end = self.owner.availability[1]
 
-        for task in sorted_tasks:
-            if not self._check_dependencies(task, scheduled_tasks):
-                plan.append(
-                    PlanItem(
-                        task=task,
-                        scheduled_time=-1,
-                        duration_minutes=task.duration_minutes,
-                        reason=f"Waiting for dependency: {task.depends_on}",
+        pending_tasks = sorted_tasks[:]
+        while pending_tasks:
+            progress_made = False
+            deferred_tasks: List[Task] = []
+
+            for task in pending_tasks:
+                if not self._check_dependencies(task, scheduled_tasks):
+                    deferred_tasks.append(task)
+                    continue
+
+                task_start = task.time_window[0]
+                task_end = task.time_window[1]
+
+                earliest_start = max(task_start, self.owner.availability[0])
+                latest_end = min(owner_end, task_end)
+
+                if earliest_start + task.duration_minutes > latest_end:
+                    plan.append(
+                        PlanItem(
+                            task=task,
+                            scheduled_time=-1,
+                            duration_minutes=task.duration_minutes,
+                            reason="Task time window doesn't overlap with owner availability",
+                        )
                     )
+                    progress_made = True
+                    continue
+
+                best_start = self._find_best_time(
+                    task, earliest_start, latest_end, occupied_slots
                 )
-                continue
 
-            task_start = task.time_window[0]
-            task_end = task.time_window[1]
+                if best_start is not None:
+                    end_time = best_start + task.duration_minutes
 
-            earliest_start = max(task_start, self.owner.availability[0])
-            latest_end = min(owner_end, task_end)
+                    time_desc = _minutes_to_time(best_start)
+                    if best_start > earliest_start:
+                        reason = (
+                            f"Scheduled at {time_desc} ({task.priority} priority, "
+                            "adjusted to avoid conflicts)"
+                        )
+                    else:
+                        reason = (
+                            f"Scheduled at {time_desc} ({task.priority} priority, "
+                            "optimal time)"
+                        )
 
-            if earliest_start + task.duration_minutes > latest_end:
-                plan.append(
-                    PlanItem(
+                    if self.pet.species == "dog" and task.task_type == "walk" and best_start < 600:
+                        reason += " - dogs benefit from morning exercise"
+
+                    if task.priority == "high" and task.time_window[0] >= 1020:
+                        window_start = _minutes_to_time(task.time_window[0])
+                        window_end = _minutes_to_time(task.time_window[1])
+                        reason += (
+                            f" - kept inside evening window {window_start}-{window_end}"
+                        )
+
+                    plan_item = PlanItem(
                         task=task,
-                        scheduled_time=-1,
+                        scheduled_time=best_start,
                         duration_minutes=task.duration_minutes,
-                        reason="Task time window doesn't overlap with owner availability",
+                        reason=reason,
                     )
-                )
-                continue
-
-            best_start = self._find_best_time(
-                task, earliest_start, latest_end, occupied_slots
-            )
-
-            if best_start is not None:
-                end_time = best_start + task.duration_minutes
-
-                time_desc = _minutes_to_time(best_start)
-                if best_start > earliest_start:
-                    reason = (
-                        f"Scheduled at {time_desc} ({task.priority} priority, "
-                        "adjusted to avoid conflicts)"
-                    )
+                    plan.append(plan_item)
+                    scheduled_tasks.append(task)
+                    occupied_slots.append((best_start, end_time + self.break_time_minutes))
+                    progress_made = True
                 else:
-                    reason = (
-                        f"Scheduled at {time_desc} ({task.priority} priority, "
-                        "optimal time)"
+                    hours_needed = task.duration_minutes / 60
+                    plan.append(
+                        PlanItem(
+                            task=task,
+                            scheduled_time=-1,
+                            duration_minutes=task.duration_minutes,
+                            reason=f"No available {hours_needed:.1f}h slot in preferred time window",
+                        )
                     )
+                    progress_made = True
 
-                if self.pet.species == "dog" and task.task_type == "walk" and best_start < 600:
-                    reason += " - dogs benefit from morning exercise"
+            if not deferred_tasks:
+                break
 
-                if task.priority == "high" and task.time_window[0] >= 1020:
-                    window_start = _minutes_to_time(task.time_window[0])
-                    window_end = _minutes_to_time(task.time_window[1])
-                    reason += (
-                        f" - kept inside evening window {window_start}-{window_end}"
+            if not progress_made:
+                for task in deferred_tasks:
+                    plan.append(
+                        PlanItem(
+                            task=task,
+                            scheduled_time=-1,
+                            duration_minutes=task.duration_minutes,
+                            reason=f"Waiting for dependency: {task.depends_on}",
+                        )
                     )
+                break
 
-                plan_item = PlanItem(
-                    task=task,
-                    scheduled_time=best_start,
-                    duration_minutes=task.duration_minutes,
-                    reason=reason,
-                )
-                plan.append(plan_item)
-                scheduled_tasks.append(task)
-                occupied_slots.append((best_start, end_time + self.break_time_minutes))
-            else:
-                hours_needed = task.duration_minutes / 60
-                plan.append(
-                    PlanItem(
-                        task=task,
-                        scheduled_time=-1,
-                        duration_minutes=task.duration_minutes,
-                        reason=f"No available {hours_needed:.1f}h slot in preferred time window",
-                    )
-                )
+            pending_tasks = deferred_tasks
 
         plan = self._fill_gaps(plan, flexible_tasks, self.owner.availability)
 

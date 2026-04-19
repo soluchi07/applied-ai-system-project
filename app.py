@@ -42,6 +42,17 @@ def _describe_time_window(window: tuple[int, int]) -> str:
             return label
     return f"Custom ({_format_minutes(window[0])}-{_format_minutes(window[1])})"
 
+
+def _clear_generated_schedule_state() -> None:
+    """Clear generated schedule artifacts after task list mutations."""
+    st.session_state.generated_plan = None
+    st.session_state.generated_pet = None
+    st.session_state.generated_owner = None
+    st.session_state.retrieved_facts = {}
+    st.session_state.schedule_explanation = ""
+    st.session_state.explanation_mode = "unknown"
+    st.session_state.followup_history = []
+
 st.title("🐾 PawPal+")
 
 with st.expander("Scenario", expanded=True):
@@ -99,6 +110,12 @@ if "explanation_mode" not in st.session_state:
     st.session_state.explanation_mode = "unknown"
 if "followup_history" not in st.session_state:
     st.session_state.followup_history = []
+if "task_action_notice" not in st.session_state:
+    st.session_state.task_action_notice = ""
+
+if st.session_state.task_action_notice:
+    st.info(st.session_state.task_action_notice)
+    st.session_state.task_action_notice = ""
 
 # Task input form with better layout
 input_col1, input_col2, input_col3, input_col4, input_col5 = st.columns(5)
@@ -139,6 +156,11 @@ else:
 
 task_notes = st.text_area("Notes (optional)", value="", height=80)
 
+task_titles = [task.title for task in st.session_state.scheduler.tasks]
+dependency_options = ["None"] + task_titles
+task_depends_on = st.selectbox("Depends on", dependency_options, index=0)
+task_frequency = st.selectbox("Recurrence", ["none", "daily", "weekly"], index=0)
+
 if st.button("➕ Add Task", use_container_width=True):
     if selected_window[0] >= selected_window[1]:
         st.error("❌ Invalid time period. End time must be after start time.")
@@ -149,12 +171,16 @@ if st.button("➕ Add Task", use_container_width=True):
             duration_minutes=int(duration),
             priority=priority,
             time_window=selected_window,
-            notes=task_notes
+            notes=task_notes,
+            depends_on=None if task_depends_on == "None" else task_depends_on,
+            frequency=None if task_frequency == "none" else task_frequency,
         )
         if st.session_state.scheduler.add_task(task):
             st.success(f"✅ Added task: **{task.title}**")
         else:
-            st.error("❌ Invalid task. Please check the inputs.")
+            st.error(
+                "❌ Invalid task. Check title, time settings, and dependency selection."
+            )
 
 if st.session_state.scheduler.tasks:
     st.subheader("📊 Task Overview")
@@ -172,21 +198,39 @@ if st.session_state.scheduler.tasks:
     with stat_col3:
         st.metric("🔴 High Priority", high_priority)
     
-    # Task list as interactive dataframe
     st.markdown("**Task List** (sorted by start time)")
-    task_display_data = [
-        {
-            "Title": t.title,
-            "Type": t.task_type,
-            "Duration (min)": t.duration_minutes,
-            "Priority": t.priority.upper(),
-            "Time Period": _describe_time_window(t.time_window),
-            "Start Time": f"{t.start_time // 60:02d}:{t.start_time % 60:02d}" if t.start_time is not None else "Not set",
-            "Notes": t.notes if t.notes else "—"
-        }
-        for t in sorted_tasks
-    ]
-    st.dataframe(task_display_data, use_container_width=True, hide_index=True)
+    task_to_remove = None
+    for idx, t in enumerate(sorted_tasks):
+        task_cols = st.columns([3, 2, 2, 1])
+        with task_cols[0]:
+            st.markdown(f"**{t.title}**")
+            st.caption(
+                f"{t.task_type.title()} | {t.priority.upper()} | {t.duration_minutes} min"
+            )
+        with task_cols[1]:
+            st.caption(f"Window: {_describe_time_window(t.time_window)}")
+            st.caption(
+                f"Dependency: {t.depends_on if t.depends_on else 'None'}"
+            )
+        with task_cols[2]:
+            st.caption(
+                f"Recurrence: {t.frequency if t.frequency else 'none'}"
+            )
+            st.caption(f"Completed: {'yes' if t.completed else 'no'}")
+        with task_cols[3]:
+            if st.button("🗑️", key=f"remove_task_{idx}_{t.title}"):
+                task_to_remove = t
+        if t.notes:
+            st.caption(f"Notes: {t.notes}")
+        st.divider()
+
+    if task_to_remove is not None:
+        if st.session_state.scheduler.remove_task(task_to_remove):
+            _clear_generated_schedule_state()
+            st.session_state.task_action_notice = (
+                f"Removed task '{task_to_remove.title}'. Generate schedule again to refresh output."
+            )
+            st.rerun()
     
     # Detect and display any scheduling conflicts
     conflicts = st.session_state.scheduler.detect_scheduling_conflicts()
@@ -300,7 +344,7 @@ if st.button("🚀 Generate Schedule", use_container_width=True):
                     priority_badge = priority_emoji.get(item.task.priority, "")
                     
                     # Create a card-like display
-                    col1, col2 = st.columns([1, 4])
+                    col1, col2, col3 = st.columns([1, 4, 1])
                     with col1:
                         st.markdown(f"### {time_str}")
                     with col2:
@@ -309,6 +353,19 @@ if st.button("🚀 Generate Schedule", use_container_width=True):
                             f"*{item.task.task_type.title()}* | {item.task.priority.upper()}\n"
                             f"> 💭 {item.reason}"
                         )
+                    with col3:
+                        if st.button("✅ Complete", key=f"complete_task_{idx}_{item.task.title}"):
+                            next_occurrence = scheduler.mark_task_complete(item.task)
+                            if next_occurrence is not None:
+                                st.session_state.task_action_notice = (
+                                    f"Completed '{item.task.title}'. Added next {next_occurrence.frequency} occurrence."
+                                )
+                            else:
+                                st.session_state.task_action_notice = (
+                                    f"Completed '{item.task.title}'."
+                                )
+                            _clear_generated_schedule_state()
+                            st.rerun()
                     st.divider()
             else:
                 st.warning("⚠️  No tasks could be scheduled within the available time window.")
