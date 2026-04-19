@@ -1,6 +1,6 @@
 # PawPal+ (Module 2 Project)
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+I built **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
 
 ## Scenario
 
@@ -10,17 +10,16 @@ A busy pet owner needs help staying consistent with pet care. They want an assis
 - Consider constraints (time available, priority, owner preferences)
 - Produce a daily plan and explain why it chose that plan
 
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
+## What I Built
 
-## What you will build
-
-Your final app should:
+My final app was able to:
 
 - Let a user enter basic owner + pet info
 - Let a user add/edit tasks (duration + priority at minimum)
 - Generate a daily schedule/plan based on constraints and priorities
 - Display the plan clearly (and ideally explain the reasoning)
 - Include tests for the most important scheduling behaviors
+
 
 ## Features
 
@@ -106,6 +105,47 @@ PawPal+ now includes a retrieval-augmented explanation layer that grounds AI out
 - If Gemini is unavailable (missing key/network/API error), the app falls back to local explanation logic
 - Retrieval operations and model-call outcomes are logged for debugging and reproducibility
 
+### Demo Scenarios
+
+Use these examples to verify the end-to-end Streamlit flow:
+
+1. **Morning dog routine**
+  - Owner: Jordan
+  - Pet: Mochi the dog
+  - Tasks: Morning walk, Breakfast, Medication
+  - Expected result: the walk is scheduled early, breakfast follows available time, and the explanation references dog exercise guidance from the knowledge base.
+
+2. **Evening care window**
+  - Owner: Jordan
+  - Pet: Mochi the dog
+  - Tasks: Evening grooming, Medication, Water refill
+  - Expected result: tasks stay inside their time windows, conflict warnings appear if two tasks overlap, and the explanation highlights why evening tasks were kept in the late window.
+
+3. **Dependency check**
+  - Owner: Jordan
+  - Pet: Mochi the dog
+  - Tasks: Feed pet, Give medication (depends on Feed pet)
+  - Expected result: the scheduler keeps medication after feeding, and the AI explanation uses the retrieved context to justify that ordering.
+
+### Sample Input / Output
+
+Sample input in the UI:
+
+- Owner name: `Jordan`
+- Pet name: `Mochi`
+- Species: `Dog`
+- Tasks:
+  - `Morning walk` (30 min, high priority, 08:00-11:40)
+  - `Breakfast` (15 min, medium priority, 09:00-12:00)
+  - `Medication` (10 min, high priority, 09:30-10:30, depends on Breakfast)
+
+Sample output:
+
+- `Morning walk` is scheduled first because it is high priority and dogs benefit from morning exercise.
+- `Breakfast` is placed inside its window without conflict.
+- `Medication` stays after `Breakfast` because the dependency guardrail keeps prerequisite tasks in order.
+- The AI explanation cites retrieved pet-care facts and falls back cleanly if Gemini is unavailable.
+
 ### Recurring Tasks
 - **Daily & Weekly Tasks**: Mark tasks with `frequency="daily"` or `frequency="weekly"`
 - **Auto-Regeneration**: When a recurring task is marked complete, a new instance is automatically created for the next occurrence
@@ -167,7 +207,7 @@ streamlit run app.py
 ### Test
 
 ```bash
-pytest -q
+python -m pytest -q
 ```
 
 ### Suggested workflow

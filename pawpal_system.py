@@ -207,11 +207,27 @@ class Scheduler:
         self.owner: Optional[PetOwner] = None
         self.break_time_minutes = break_time_minutes
 
+    def _has_task_with_title(self, title: str) -> bool:
+        """Return True if a task with the provided title exists."""
+        return any(existing.title == title for existing in self.tasks)
+
     def add_task(self, task: Task) -> bool:
         """Add a task to the scheduler."""
         if not task.validate():
             return False
+        if task.depends_on:
+            if task.depends_on == task.title:
+                return False
+            if not self._has_task_with_title(task.depends_on):
+                return False
         self.tasks.append(task)
+        return True
+
+    def remove_task(self, task: Task) -> bool:
+        """Remove a task from the scheduler."""
+        if task not in self.tasks:
+            return False
+        self.tasks.remove(task)
         return True
 
     def set_pet(self, pet: Pet) -> None:

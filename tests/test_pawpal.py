@@ -65,3 +65,45 @@ def test_evening_window_task_does_not_block_morning_task() -> None:
 
 	assert breakfast_item.scheduled_time != -1
 	assert breakfast_item.scheduled_time < 720
+
+
+def test_dependency_order_keeps_medication_after_feed() -> None:
+	scheduler = Scheduler()
+	scheduler.set_pet(Pet("Mochi", "dog"))
+	scheduler.set_owner(PetOwner("Jordan", availability=(480, 1320)))
+
+	assert scheduler.add_task(Task("Feed pet", "feed", 15, "high", time_window=(540, 720)))
+	assert scheduler.add_task(
+		Task(
+			"Give medication",
+			"med",
+			10,
+			"high",
+			time_window=(540, 780),
+			depends_on="Feed pet",
+		)
+	)
+
+	plan = scheduler.generate_plan()
+	feed_item = next(item for item in plan if item.task.title == "Feed pet")
+	med_item = next(item for item in plan if item.task.title == "Give medication")
+
+	assert feed_item.scheduled_time != -1
+	assert med_item.scheduled_time != -1
+	assert med_item.scheduled_time > feed_item.scheduled_time
+	assert "dependency" not in med_item.reason.lower()
+
+
+def test_conflicts_are_reported_without_crashing_scheduler() -> None:
+	scheduler = Scheduler()
+	scheduler.set_pet(Pet("Mochi", "dog"))
+	scheduler.set_owner(PetOwner("Jordan", availability=(480, 1320)))
+
+	assert scheduler.add_task(Task("Morning walk", "walk", 30, "high", start_time="09:00"))
+	assert scheduler.add_task(Task("Breakfast", "feed", 20, "medium", start_time="09:10"))
+
+	conflicts = scheduler.detect_scheduling_conflicts()
+
+	assert conflicts
+	assert "Morning walk" in conflicts[0]
+	assert "Breakfast" in conflicts[0]
