@@ -210,4 +210,4 @@ streamlit run app.py
 python -m pytest -q
 ```
 
-> You can find the Loom demo [here](https://www.loom.com/share/ab7ff82b8ca948be899a64a095aaabb4) and the running of unit tests [here](https://www.loom.com/share/f21abe46bf814b5c986c36ec6d900a2f)
+> You can find the Loom demo here: [demo #1](https://www.loom.com/share/ab7ff82b8ca948be899a64a095aaabb4) [demo #2](https://www.loom.com/share/f004e3c4bb1a4924931decfbf7ea2c39) and the running of unit tests [here](https://www.loom.com/share/f21abe46bf814b5c986c36ec6d900a2f)
