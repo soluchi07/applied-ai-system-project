@@ -210,4 +210,4 @@ streamlit run app.py
 python -m pytest -q
 ```
 
-[^1]: Loom demo: https://www.loom.com/share/ab7ff82b8ca948be899a64a095aaabb4
+> Loom demo: https://www.loom.com/share/ab7ff82b8ca948be899a64a095aaabb4
